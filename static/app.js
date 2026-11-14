@@ -188,15 +188,28 @@ async function loadSymptomsForMachine(machineId) {
     `;
     updateSelectedCount();
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
     try {
-        const res = await fetch(`${API_BASE}/api/machines/${machineId}/symptoms`);
+        const res = await fetch(`${API_BASE}/api/machines/${machineId}/symptoms`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         allSymptoms = await res.json();
 
         renderSymptomChecklist(allSymptoms);
     } catch (err) {
+        clearTimeout(timeoutId);
         console.error('Failed loading symptoms:', err);
-        list.innerHTML = `<div class="loading-state" style="grid-column: 1 / -1; color: var(--critical-red);">Failed to retrieve symptoms.</div>`;
+        list.innerHTML = `
+            <div class="loading-state" style="grid-column: 1 / -1; color: var(--critical-red);">
+                <p>Failed to retrieve symptoms (${escapeHtml(err.name === 'AbortError' ? 'Server query timed out' : err.message)}).</p>
+                <button type="button" class="btn-ghost" onclick="loadSymptomsForMachine('${machineId}')" style="margin-top: 0.5rem; display: inline-block;">Retry Query</button>
+            </div>
+        `;
     }
 }
 
@@ -297,6 +310,8 @@ function applyTelemetryPreset(presetKey) {
     const torque  = document.getElementById('sensorTorque');
     const wear    = document.getElementById('sensorWear');
 
+    if (!air || !proc || !speed || !torque || !wear) return;
+
     switch (presetKey) {
         case 'normal':
             air.value = '298.5';
@@ -376,11 +391,16 @@ async function checkLiveMlTelemetry() {
             sensor_data: telemetry
         };
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+
         const res = await fetch(`${API_BASE}/api/ml/predict`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
         if (!res.ok) return;
         const data = await res.json();
@@ -401,21 +421,27 @@ async function checkLiveMlTelemetry() {
 }
 
 function getCollectedSensorTelemetry() {
-    const air     = document.getElementById('sensorAirTemp').value;
-    const proc    = document.getElementById('sensorProcessTemp').value;
-    const speed   = document.getElementById('sensorSpeed');
-    const torque  = document.getElementById('sensorTorque').value;
-    const wear    = document.getElementById('sensorWear').value;
+    const airEl   = document.getElementById('sensorAirTemp');
+    const procEl  = document.getElementById('sensorProcessTemp');
+    const speedEl = document.getElementById('sensorSpeed');
+    const torqEl  = document.getElementById('sensorTorque');
+    const wearEl  = document.getElementById('sensorWear');
 
-    const hasData = [air, proc, speed.value, torque, wear].some(v => v !== '');
+    const air   = airEl ? airEl.value.trim() : '';
+    const proc  = procEl ? procEl.value.trim() : '';
+    const speed = speedEl ? speedEl.value.trim() : '';
+    const torq  = torqEl ? torqEl.value.trim() : '';
+    const wear  = wearEl ? wearEl.value.trim() : '';
+
+    const hasData = [air, proc, speed, torq, wear].some(v => v !== '');
     if (!hasData) return null;
 
     const data = {};
-    if (air)         data.air_temp = parseFloat(air);
-    if (proc)        data.process_temp = parseFloat(proc);
-    if (speed.value) data.rotational_speed = parseFloat(speed.value);
-    if (torque)      data.torque = parseFloat(torque);
-    if (wear)        data.tool_wear = parseFloat(wear);
+    if (air && !isNaN(parseFloat(air)))       data.air_temp = parseFloat(air);
+    if (proc && !isNaN(parseFloat(proc)))     data.process_temp = parseFloat(proc);
+    if (speed && !isNaN(parseFloat(speed)))   data.rotational_speed = parseFloat(speed);
+    if (torq && !isNaN(parseFloat(torq)))     data.torque = parseFloat(torq);
+    if (wear && !isNaN(parseFloat(wear)))     data.tool_wear = parseFloat(wear);
 
     return data;
 }
